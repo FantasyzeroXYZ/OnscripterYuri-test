@@ -2163,8 +2163,12 @@ int ONScripter::inputCommand()
         errorAndExit( "input: no string variable." );
     int no = script_h.current_variable.var_no;
 
-    const char *desc = script_h.readStr(); // description
-    const char *buf = script_h.readStr(); // default value
+    // IMPORTANT: readStr() returns the shared ScriptHandler::string_buffer.
+    // Copy each argument before the next readStr()/readInt() overwrites it.
+    // (Reading desc, then buf, then converting desc afterwards made both
+    //  strings appear empty — the ESG prompt bug.)
+    std::string prompt  = onsInputCodingToUtf8( script_h.readStr() ); // description
+    std::string initial = onsInputCodingToUtf8( script_h.readStr() ); // default value
     int maxlen = script_h.readInt(); // maxlen
     int widechar = script_h.readInt(); // widechar flag
     if ( script_h.getEndStatus() & ScriptHandler::END_COMMA ){
@@ -2177,8 +2181,11 @@ int ONScripter::inputCommand()
     // [ONS-INPUT] Show a real modal input dialog instead of silently keeping
     // the script default. Prompt/default are in script encoding; the host
     // dialog works in UTF-8, and the result is converted back before storing.
-    std::string prompt  = onsInputCodingToUtf8( desc );
-    std::string initial = onsInputCodingToUtf8( buf );
+#if defined(ANDROID)
+    __android_log_print(ANDROID_LOG_INFO, "ONS-INPUT",
+                        "inputCommand prompt_len=%zu initial_len=%zu maxlen=%d",
+                        prompt.size(), initial.size(), maxlen);
+#endif
     char out[4096] = { 0 };
     bool confirmed = ons_host_request_input( prompt.c_str(), initial.c_str(),
                                              maxlen, widechar,
