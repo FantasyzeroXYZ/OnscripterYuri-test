@@ -24,11 +24,18 @@
  */
 
 #include "ONScripter.h"
+#include "ONSInput.h"
 #include "Utils.h"
 #include "gbk2utf16.h"
 #include "sjis2utf16.h"
 #include "version.h"
 #include "stdlib.h"
+
+#include <chrono>
+#include <condition_variable>
+#include <cstring>
+#include <mutex>
+#include <string>
 
 ONScripter ons;
 Coding2UTF16 *coding2utf16 = NULL;
@@ -113,6 +120,7 @@ static jmethodID JavaPlayVideo = NULL;
 static jmethodID JavaGetFD = NULL;
 static jmethodID JavaMkdir = NULL;
 static jmethodID JavaBridgeEvent = NULL; // [ONS-BRIDGE] extraction event upcall
+static jmethodID JavaShowInput = NULL;   // [ONS-INPUT] showInputDialog(String,String,int)
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 {
@@ -140,6 +148,8 @@ JNIEXPORT jint JNICALL JAVA_EXPORT_NAME(ONScripter_nativeInitJavaCallbacks) (JNI
     JavaGetFD = jniEnv->GetMethodID(JavaONScripterClass, "getFD", "([BI)I");
     JavaMkdir = jniEnv->GetMethodID(JavaONScripterClass, "mkdir", "([B)I");
     JavaBridgeEvent = jniEnv->GetMethodID(JavaONScripterClass, "onBridgeEvent", "([B)V"); // [ONS-BRIDGE]
+    JavaShowInput = jniEnv->GetMethodID(JavaONScripterClass, "showInputDialog",
+                                        "(Ljava/lang/String;Ljava/lang/String;I)V"); // [ONS-INPUT]
     return 0;
 }
 
@@ -189,6 +199,105 @@ void EmitAndroid(const char* type, const std::string& payload)
 }
 
 } // namespace onsbridge
+
+// ============================================================================
+// [ONS-INPUT] Android implementation of ONSInput.h.
+// JNI -> ONScripter.java#showInputDialog -> AlertDialog + EditText.
+// The SDL thread blocks here until the Java dialog calls nativeOnInputResult().
+// Web/desktop implementations live in ons_input_web.cpp / ONSInput.cpp.
+// ============================================================================
+#if defined(ANDROID)
+
+namespace onsbridge {
+
+std::mutex g_inputMutex;
+std::condition_variable g_inputCv;
+bool g_inputDone = false;
+bool g_inputCancelled = false;
+std::string g_inputText;
+
+} // namespace onsbridge
+
+extern "C" int ons_host_request_input(const char* prompt,
+                                      const char* initial,
+                                      int maxlen,
+                                      int widechar,
+                                      char* out,
+                                      int out_size)
+{
+    (void)widechar;
+    if (!out || out_size <= 0) return 0;
+    out[0] = '\0';
+    if (!jniVM || !JavaONScripter || !JavaShowInput) return 0;
+
+    __android_log_print(ANDROID_LOG_INFO, "ONS-INPUT",
+                        "request maxlen=%d", maxlen);
+
+    JNIEnv* jniEnv = NULL;
+    jniVM->AttachCurrentThread(&jniEnv, NULL);
+    if (!jniEnv) {
+        __android_log_print(ANDROID_LOG_ERROR, "ONS",
+                            "ons_host_request_input: AttachCurrentThread() failed");
+        return 0;
+    }
+
+    jstring jprompt = jniEnv->NewStringUTF(prompt ? prompt : "");
+    jstring jinitial = jniEnv->NewStringUTF(initial ? initial : "");
+    if (!jprompt || !jinitial) {
+        if (jprompt) jniEnv->DeleteLocalRef(jprompt);
+        if (jinitial) jniEnv->DeleteLocalRef(jinitial);
+        return 0;
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(onsbridge::g_inputMutex);
+        onsbridge::g_inputDone = false;
+        onsbridge::g_inputCancelled = false;
+        onsbridge::g_inputText = initial ? initial : "";
+    }
+
+    jniEnv->CallVoidMethod(JavaONScripter, JavaShowInput, jprompt, jinitial,
+                           (jint)maxlen);
+    jniEnv->DeleteLocalRef(jprompt);
+    jniEnv->DeleteLocalRef(jinitial);
+    if (jniEnv->ExceptionCheck()) {
+        jniEnv->ExceptionDescribe();
+        jniEnv->ExceptionClear();
+        return 0;
+    }
+
+    std::unique_lock<std::mutex> lk(onsbridge::g_inputMutex);
+    if (!onsbridge::g_inputCv.wait_for(lk, std::chrono::seconds(60),
+                                       [] { return onsbridge::g_inputDone; })) {
+        __android_log_print(ANDROID_LOG_WARN, "ONS",
+                            "ons_host_request_input: timeout waiting for host dialog");
+        return 0;
+    }
+
+    std::strncpy(out, onsbridge::g_inputText.c_str(), (size_t)out_size - 1);
+    out[out_size - 1] = '\0';
+    __android_log_print(ANDROID_LOG_INFO, "ONS-INPUT",
+                        "result confirmed=%d len=%zu",
+                        onsbridge::g_inputCancelled ? 0 : 1,
+                        std::strlen(out));
+    return onsbridge::g_inputCancelled ? 0 : 1;
+}
+
+extern "C" JNIEXPORT void JNICALL
+JAVA_EXPORT_NAME(ONScripter_nativeOnInputResult)(JNIEnv* env, jobject,
+                                                 jstring text)
+{
+    std::lock_guard<std::mutex> lk(onsbridge::g_inputMutex);
+    onsbridge::g_inputCancelled = (text == nullptr);
+    if (text) {
+        const char* s = env->GetStringUTFChars(text, nullptr);
+        onsbridge::g_inputText = s ? s : "";
+        if (s) env->ReleaseStringUTFChars(text, s);
+    }
+    onsbridge::g_inputDone = true;
+    onsbridge::g_inputCv.notify_all();
+}
+#endif // ANDROID
 
 extern "C" {
 // byte-capture / file-read exports implemented in ONScripter_sound.cpp /

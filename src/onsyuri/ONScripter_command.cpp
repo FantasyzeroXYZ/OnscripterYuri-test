@@ -24,7 +24,17 @@
 
 #include "ONScripter.h"
 #include "ONSBridge.h"
+#include "ONSInput.h"
 #include "BaseReader.h"
+#include "DirectReader.h"
+
+#include <cstring>
+#include <string>
+#include <vector>
+
+#if defined(ANDROID)
+#include <android/log.h>
+#endif
 
 // [ONS-BRIDGE] 语音文件读取所需的当前 Archive 读取器（waveCommand 捕获）
 static BaseReader* g_ons_cbr_for_read = nullptr;
@@ -2113,6 +2123,38 @@ int ONScripter::isdownCommand()
     return RET_CONTINUE;
 }
 
+static std::string onsInputCodingToUtf8( const char *s )
+{
+    if ( !s ) return std::string();
+    std::vector<char> buf( strlen(s) * 4 + 4 );
+    DirectReader::convertCodingToUTF8( buf.data(), s );
+    return std::string( buf.data() );
+}
+
+static std::string onsInputUtf8ToCoding( const std::string &s )
+{
+    std::vector<char> buf( s.size() * 2 + 2 );
+    DirectReader::convertFromUTF8ToCoding( buf.data(), s.c_str() );
+    return std::string( buf.data() );
+}
+
+static std::string onsInputTruncateUtf8( const std::string &s, int maxlen )
+{
+    if ( maxlen <= 0 ) return s;
+    size_t i = 0;
+    int count = 0;
+    while ( i < s.size() && count < maxlen ){
+        unsigned char c = (unsigned char)s[i];
+        size_t n = ( c < 0x80 ) ? 1 :
+                   ( ( c & 0xE0 ) == 0xC0 ) ? 2 :
+                   ( ( c & 0xF0 ) == 0xE0 ) ? 3 : 4;
+        if ( i + n > s.size() ) break;
+        i += n;
+        count++;
+    }
+    return s.substr( 0, i );
+}
+
 int ONScripter::inputCommand()
 {
     script_h.readStr();
@@ -2121,20 +2163,39 @@ int ONScripter::inputCommand()
         errorAndExit( "input: no string variable." );
     int no = script_h.current_variable.var_no;
 
-    script_h.readStr(); // description
+    const char *desc = script_h.readStr(); // description
     const char *buf = script_h.readStr(); // default value
-    setStr( &script_h.getVariableData(no).str, buf );
-
-    utils::printInfo( "*** inputCommand(): $%d is set to the default value: %s\n",
-            no, buf );
-    script_h.readInt(); // maxlen
-    script_h.readInt(); // widechar flag
+    int maxlen = script_h.readInt(); // maxlen
+    int widechar = script_h.readInt(); // widechar flag
     if ( script_h.getEndStatus() & ScriptHandler::END_COMMA ){
         script_h.readInt(); // window width
         script_h.readInt(); // window height
         script_h.readInt(); // text box width
         script_h.readInt(); // text box height
     }
+
+    // [ONS-INPUT] Show a real modal input dialog instead of silently keeping
+    // the script default. Prompt/default are in script encoding; the host
+    // dialog works in UTF-8, and the result is converted back before storing.
+    std::string prompt  = onsInputCodingToUtf8( desc );
+    std::string initial = onsInputCodingToUtf8( buf );
+    char out[4096] = { 0 };
+    bool confirmed = ons_host_request_input( prompt.c_str(), initial.c_str(),
+                                             maxlen, widechar,
+                                             out, sizeof(out) ) != 0;
+    std::string result = confirmed ? std::string(out) : initial;
+
+    result = onsInputTruncateUtf8( result, maxlen );
+    std::string coded = onsInputUtf8ToCoding( result );
+    setStr( &script_h.getVariableData(no).str, coded.c_str() );
+
+    utils::printInfo( "*** inputCommand(): $%d (maxlen=%d, wide=%d, confirmed=%d, len=%zu)\n",
+                      no, maxlen, widechar, confirmed ? 1 : 0, coded.size() );
+#if defined(ANDROID)
+    __android_log_print(ANDROID_LOG_INFO, "ONS-INPUT",
+                        "inputCommand $%d confirmed=%d len=%zu",
+                        no, confirmed ? 1 : 0, coded.size());
+#endif
 
     return RET_CONTINUE;
 }

@@ -372,6 +372,7 @@ endfunction()
 
 function(config_web TARGET_NAME)
     add_executable(${TARGET_NAME} ${ONSYURI_CODE})
+    target_sources(${TARGET_NAME} PRIVATE src/onsyuri/ons_input_web.cpp)
     message("Web enviroment for "  ${TARGET_NAME})
     target_link_directories(${TARGET_NAME} PRIVATE
         ${PROJECT_SOURCE_DIR}/thirdparty/build/arch_wasm/lib
@@ -502,6 +503,7 @@ set(ONSYURI_CODE
     src/onsyuri/ONScripter_file2.cpp
     src/onsyuri/ONScripter_image.cpp
     src/onsyuri/ONScripter_lut.cpp
+    src/onsyuri/ONSInput.cpp
     src/onsyuri/onscripter_main.cpp
     src/onsyuri/ONScripter_rmenu.cpp
     src/onsyuri/ONScripter_sound.cpp
