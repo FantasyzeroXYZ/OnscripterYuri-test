@@ -8,7 +8,8 @@
  */
 #include "ONScripter.h"
 #include "ONSInput.h"
-#include "DirectReader.h"
+
+#include <SDL_ttf.h>
 
 #if defined(ANDROID)
 #include <android/log.h>
@@ -23,14 +24,6 @@
 extern ONScripter ons;
 
 namespace {
-
-std::string utf8ToCoding(const std::string& s)
-{
-    if (s.empty()) return std::string();
-    std::vector<char> buf(s.size() * 2 + 2);
-    DirectReader::convertFromUTF8ToCoding(buf.data(), s.c_str());
-    return std::string(buf.data());
-}
 
 int utf8Count(const std::string& s)
 {
@@ -103,6 +96,16 @@ int ONScripter::showInputOverlay(const char* prompt,
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
     SDL_StartTextInput();
 
+    if (!TTF_WasInit()) TTF_Init();
+    TTF_Font* promptFont = font_file ? TTF_OpenFont(font_file, 24) : nullptr;
+    TTF_Font* inputFont = font_file ? TTF_OpenFont(font_file, 32) : nullptr;
+#if defined(ANDROID)
+    __android_log_print(ANDROID_LOG_INFO, "ONS-INPUT",
+                        "overlay font=%s prompt=%p input=%p err=%s",
+                        font_file ? font_file : "(null)",
+                        (void*)promptFont, (void*)inputFont, TTF_GetError());
+#endif
+
     bool confirmed = false;
     bool cancelled = false;
 
@@ -121,24 +124,29 @@ int ONScripter::showInputOverlay(const char* prompt,
         SDL_SetSurfaceBlendMode(overlay, SDL_BLENDMODE_NONE);
         SDL_FillRect(overlay, &box, SDL_MapRGB(overlay->format, 20, 20, 20));
 
-        FontInfo f = sentence_font;
-        uchar3 white = { 255, 255, 255 };
-        f.xy[0] = box.x + 20;
-        f.xy[1] = box.y + 18;
-        f.num_xy[0] = std::max(8, (boxW - 40) /
-                              std::max(1, f.font_size_xy[0]));
-        std::string promptCoded = utf8ToCoding(prompt ? prompt : "");
-        if (!promptCoded.empty()) {
-            drawString(promptCoded.c_str(), white, &f, false, overlay);
+        SDL_Color white = { 255, 255, 255, 255 };
+        SDL_Surface* promptSurf = promptFont
+                ? TTF_RenderUTF8_Blended_Wrapped(promptFont,
+                        (prompt ? prompt : ""), white, boxW - 40)
+                : nullptr;
+        if (promptSurf) {
+            SDL_Rect dst = { box.x + 20, box.y + 18, 0, 0 };
+            SDL_SetSurfaceBlendMode(overlay, SDL_BLENDMODE_BLEND);
+            SDL_BlitSurface(promptSurf, NULL, overlay, &dst);
+            SDL_FreeSurface(promptSurf);
         }
 
-        FontInfo fi = sentence_font;
-        fi.xy[0] = box.x + 20;
-        fi.xy[1] = box.y + boxH - fi.font_size_xy[1] - 22;
-        fi.num_xy[0] = std::max(8, (boxW - 40) /
-                               std::max(1, fi.font_size_xy[0]));
-        std::string shown = utf8ToCoding(text) + "_";
-        drawString(shown.c_str(), white, &fi, false, overlay);
+        std::string shown = text + "_";
+        SDL_Surface* inputSurf = inputFont
+                ? TTF_RenderUTF8_Blended(inputFont, shown.c_str(), white)
+                : nullptr;
+        if (inputSurf) {
+            SDL_Rect dst = { box.x + 20,
+                             box.y + boxH - inputSurf->h - 18, 0, 0 };
+            SDL_SetSurfaceBlendMode(overlay, SDL_BLENDMODE_BLEND);
+            SDL_BlitSurface(inputSurf, NULL, overlay, &dst);
+            SDL_FreeSurface(inputSurf);
+        }
 
         presentOverlaySurface(overlay);
 
@@ -173,6 +181,8 @@ int ONScripter::showInputOverlay(const char* prompt,
         SDL_Delay(16);
     }
 
+    if (promptFont) TTF_CloseFont(promptFont);
+    if (inputFont) TTF_CloseFont(inputFont);
     SDL_StopTextInput();
     flush(REFRESH_NORMAL_MODE);
 
