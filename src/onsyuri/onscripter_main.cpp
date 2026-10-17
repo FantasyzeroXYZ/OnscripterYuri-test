@@ -218,7 +218,7 @@ std::string g_inputText;
 
 } // namespace onsbridge
 
-extern "C" int ons_host_request_input(const char* prompt,
+extern "C" int ons_input_host_request(const char* prompt,
                                       const char* initial,
                                       int maxlen,
                                       int widechar,
@@ -237,7 +237,7 @@ extern "C" int ons_host_request_input(const char* prompt,
     jniVM->AttachCurrentThread(&jniEnv, NULL);
     if (!jniEnv) {
         __android_log_print(ANDROID_LOG_ERROR, "ONS",
-                            "ons_host_request_input: AttachCurrentThread() failed");
+                            "ons_input_host_request: AttachCurrentThread() failed");
         return 0;
     }
 
@@ -270,7 +270,7 @@ extern "C" int ons_host_request_input(const char* prompt,
     if (!onsbridge::g_inputCv.wait_for(lk, std::chrono::seconds(60),
                                        [] { return onsbridge::g_inputDone; })) {
         __android_log_print(ANDROID_LOG_WARN, "ONS",
-                            "ons_host_request_input: timeout waiting for host dialog");
+                            "ons_input_host_request: timeout waiting for host dialog");
         return 0;
     }
 
@@ -603,6 +603,12 @@ void parseOption(int argc, char *argv[]) {
             else if (!strcmp(argv[0]+1, "-enc:utf8")){
                 if(!coding2utf16) coding2utf16 = new GBK2UTF16();
                 coding2utf16->force_utf8 = true;
+            }
+            else if (!strcmp(argv[0]+1, "-input-mode:overlay")){
+                ons_set_input_mode(ONS_INPUT_MODE_OVERLAY);
+            }
+            else if (!strcmp(argv[0]+1, "-input-mode:host")){
+                ons_set_input_mode(ONS_INPUT_MODE_HOST);
             }
 
             // render options

@@ -37,7 +37,7 @@ std::string jsQuote(const char* s)
 
 } // namespace
 
-extern "C" int ons_host_request_input(const char* prompt,
+extern "C" int ons_input_host_request(const char* prompt,
                                       const char* initial,
                                       int maxlen,
                                       int widechar,
