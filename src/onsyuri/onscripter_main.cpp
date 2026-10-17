@@ -106,11 +106,13 @@ extern "C"
 #include <jni.h>
 #include <android/log.h>
 #include <errno.h>
+#include <stdint.h>
 static JavaVM *jniVM = NULL;
 static jobject JavaONScripter = NULL;
 static jmethodID JavaPlayVideo = NULL;
 static jmethodID JavaGetFD = NULL;
 static jmethodID JavaMkdir = NULL;
+static jmethodID JavaBridgeEvent = NULL; // [ONS-BRIDGE] extraction event upcall
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 {
@@ -137,6 +139,7 @@ JNIEXPORT jint JNICALL JAVA_EXPORT_NAME(ONScripter_nativeInitJavaCallbacks) (JNI
     JavaPlayVideo = jniEnv->GetMethodID(JavaONScripterClass, "playVideo", "([B)V");
     JavaGetFD = jniEnv->GetMethodID(JavaONScripterClass, "getFD", "([BI)I");
     JavaMkdir = jniEnv->GetMethodID(JavaONScripterClass, "mkdir", "([B)I");
+    JavaBridgeEvent = jniEnv->GetMethodID(JavaONScripterClass, "onBridgeEvent", "([B)V"); // [ONS-BRIDGE]
     return 0;
 }
 
@@ -146,10 +149,112 @@ JAVA_EXPORT_NAME(ONScripter_nativeGetWidth) ( JNIEnv*  env, jobject thiz )
     return ons.getWidth();
 }
 
-JNIEXPORT jint JNICALL 
+JNIEXPORT jint JNICALL
 JAVA_EXPORT_NAME(ONScripter_nativeGetHeight) ( JNIEnv*  env, jobject thiz )
 {
     return ons.getHeight();
+}
+
+} // extern "C" — SDL JNI entry points above
+
+// ============================================================================
+// [ONS-BRIDGE] Android extraction bridge
+// - EmitAndroid: JSON event (dialogue/sound) -> Java onBridgeEvent(byte[])
+// - JNI pull wrappers around the wave byte capture / file read exports,
+//   so the host can fetch voice bytes for replay/Anki export (same
+//   three-stage semantics as the web host).
+// ============================================================================
+namespace onsbridge {
+
+void EmitAndroid(const char* type, const std::string& payload)
+{
+    if (!jniVM || !JavaONScripter || !JavaBridgeEvent || !type) return;
+
+    JNIEnv * jniEnv = NULL;
+    jniVM->AttachCurrentThread(&jniEnv, NULL);
+    if (!jniEnv){
+        __android_log_print(ANDROID_LOG_ERROR, "ONS", "EmitAndroid: AttachCurrentThread() failed");
+        return;
+    }
+
+    std::string json = std::string("{\"type\":\"") + type + "\",\"payload\":" + payload + "}";
+    jsize len = (jsize)json.size();
+    jbyteArray jba = jniEnv->NewByteArray(len);
+    if (jba){
+        jniEnv->SetByteArrayRegion(jba, 0, len, (const jbyte*)json.c_str());
+        jniEnv->CallVoidMethod(JavaONScripter, JavaBridgeEvent, jba);
+        jniEnv->DeleteLocalRef(jba);
+    }
+    if (jniEnv->ExceptionCheck()) jniEnv->ExceptionClear();
+}
+
+} // namespace onsbridge
+
+extern "C" {
+// byte-capture / file-read exports implemented in ONScripter_sound.cpp /
+// ONScripter_command.cpp
+int ons_wave_size();
+void* ons_wave_buf();
+const char* ons_wave_name();
+void ons_wave_drop();
+int ons_read_file( const char* name, int name_len, int* out_size );
+void ons_free_buf( int ptr );
+
+static jbyteArray newByteArrayFromNative(JNIEnv * env, const void* data, jint len)
+{
+    if (!env || !data || len <= 0) return NULL;
+    jbyteArray jba = env->NewByteArray(len);
+    if (jba) env->SetByteArrayRegion(jba, 0, len, (const jbyte*)data);
+    return jba;
+}
+
+JNIEXPORT jint JNICALL
+JAVA_EXPORT_NAME(ONScripter_nativeOnsWaveSize) ( JNIEnv* env, jobject thiz )
+{
+    return ons_wave_size();
+}
+
+JNIEXPORT jbyteArray JNICALL
+JAVA_EXPORT_NAME(ONScripter_nativeOnsWaveName) ( JNIEnv* env, jobject thiz )
+{
+    const char* nm = ons_wave_name();
+    if (!nm || !nm[0]) return NULL;
+    return newByteArrayFromNative(env, nm, (jint)strlen(nm));
+}
+
+JNIEXPORT jbyteArray JNICALL
+JAVA_EXPORT_NAME(ONScripter_nativeOnsWaveBytes) ( JNIEnv* env, jobject thiz )
+{
+    jint sz = (jint)ons_wave_size();
+    void* buf = ons_wave_buf();
+    if (sz <= 0 || !buf) return NULL;
+    return newByteArrayFromNative(env, buf, sz);
+}
+
+JNIEXPORT void JNICALL
+JAVA_EXPORT_NAME(ONScripter_nativeOnsWaveDrop) ( JNIEnv* env, jobject thiz )
+{
+    ons_wave_drop();
+}
+
+// read file bytes by storage name (archive-aware, for replay/export of a
+// previously paired voice after the live capture buffer was replaced)
+JNIEXPORT jbyteArray JNICALL
+JAVA_EXPORT_NAME(ONScripter_nativeOnsReadFile) ( JNIEnv* env, jobject thiz, jbyteArray jname )
+{
+    if (!env || !jname) return NULL;
+    jsize len = env->GetArrayLength(jname);
+    if (len <= 0 || len > 1024) return NULL;
+    char name[1025];
+    env->GetByteArrayRegion(jname, 0, len, (jbyte*)name);
+    name[len] = 0;
+
+    int size = 0;
+    int ptr = ons_read_file( name, len, &size );
+    if (!ptr || size <= 0) return NULL;
+    jbyteArray jba = newByteArrayFromNative(env, (const void*)(intptr_t)ptr, (jint)size);
+    ons_free_buf( ptr );
+    return jba;
 }
 
 void playVideoAndroid(const char *path)

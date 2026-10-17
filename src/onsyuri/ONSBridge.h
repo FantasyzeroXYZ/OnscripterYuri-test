@@ -3,11 +3,27 @@
  * ============================================================================
  * Header-only utility functions. Injection function implementations are in
  * ONScripter_text.cpp. All bridge traffic goes through the 150ms rate gate.
+ *
+ * Platform split:
+ *  - __EMSCRIPTEN__: Emit goes to window.OnsExtract.event via EM_ASM (web host).
+ *  - other platforms (ANDROID host): Emit forwards the JSON event to the Java
+ *    host via JNI upcall (onsbridge::EmitAndroid, implemented in
+ *    onscripter_main.cpp -> com.yuri.onscripter.ONScripter.onBridgeEvent).
  */
 #pragma once
 
 #include <string>
+
+#ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#else
+// EMSCRIPTEN_KEEPALIVE is used by [ONS-BRIDGE] export functions in
+// ONScripter_command.cpp; provide a native fallback so the same annotations
+// compile (and keep symbols alive) outside emscripten.
+#ifndef EMSCRIPTEN_KEEPALIVE
+#define EMSCRIPTEN_KEEPALIVE __attribute__((visibility("default"))) __attribute__((used))
+#endif
+#endif
 
 extern "C" {
 void ons_inject_move(int x, int y);
@@ -15,6 +31,13 @@ void ons_inject_click(int x, int y);
 void ons_inject_rclick(int x, int y);
 void ons_inject_key(int sym, int mod);
 }
+
+#if !defined(__EMSCRIPTEN__)
+namespace onsbridge {
+// Android/other native hosts: forward one JSON event to the Java host.
+void EmitAndroid(const char* type, const std::string& payload);
+}
+#endif
 
 namespace onsbridge {
 
@@ -37,6 +60,7 @@ inline std::string JsonEscape(const char* s, int len) {
     return esc;
 }
 
+#ifdef __EMSCRIPTEN__
 inline void Emit(const char* type, const std::string& payload) {
     std::string json = std::string("{\"type\":\"") + type + "\",\"payload\":" + payload + "}";
     EM_ASM({
@@ -48,6 +72,11 @@ inline void Emit(const char* type, const std::string& payload) {
         } catch (e) { console.warn('[ons-bridge]', e && e.message); }
     }, json.c_str());
 }
+#else
+inline void Emit(const char* type, const std::string& payload) {
+    EmitAndroid(type, payload);
+}
+#endif
 
 // base64 encode raw bytes (script encoding may be SJIS/GBK - UTF8ToString
 // would mangle non-UTF-8 text; host decodes with TextDecoder sniffing)
