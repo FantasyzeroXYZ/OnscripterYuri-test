@@ -21,8 +21,6 @@
 #include <string>
 #include <vector>
 
-extern ONScripter ons;
-
 namespace {
 
 int utf8Count(const std::string& s)
@@ -197,13 +195,3 @@ int ONScripter::showInputOverlay(const char* prompt,
     return 1;
 }
 
-extern "C" int ons_input_overlay_request(const char* prompt,
-                                         const char* initial,
-                                         int maxlen,
-                                         int widechar,
-                                         char* out,
-                                         int out_size)
-{
-    (void)widechar;
-    return ons.showInputOverlay(prompt, initial, maxlen, out, out_size);
-}

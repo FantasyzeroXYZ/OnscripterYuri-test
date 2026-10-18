@@ -38,6 +38,21 @@
 #include <string>
 
 ONScripter ons;
+
+// [ONS-INPUT] Keep the global ons reference in this translation unit.  An
+// overlay object with its own extern ONScripter ons caused a startup crash on
+// Android, while the same object without that reference links/runs fine.
+extern "C" int ons_input_overlay_request(const char* prompt,
+                                         const char* initial,
+                                         int maxlen,
+                                         int widechar,
+                                         char* out,
+                                         int out_size)
+{
+    (void)widechar;
+    return ons.showInputOverlay(prompt, initial, maxlen, out, out_size);
+}
+
 Coding2UTF16 *coding2utf16 = NULL;
 std::string g_stdoutpath = "stdout.txt";
 std::string g_stderrpath = "stderr.txt";
