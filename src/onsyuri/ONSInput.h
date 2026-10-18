@@ -21,12 +21,6 @@
 extern "C" {
 #endif
 
-#define ONS_INPUT_MODE_HOST    0  /* platform dialog (Android AlertDialog / web prompt) */
-#define ONS_INPUT_MODE_OVERLAY 1  /* kernel-drawn SDL overlay */
-
-void ons_set_input_mode(int mode);
-int  ons_get_input_mode(void);
-
 int ons_host_request_input(const char* prompt,
                            const char* initial,
                            int maxlen,

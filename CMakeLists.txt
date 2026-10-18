@@ -504,7 +504,6 @@ set(ONSYURI_CODE
     src/onsyuri/ONScripter_image.cpp
     src/onsyuri/ONScripter_lut.cpp
     src/onsyuri/ONSInput.cpp
-    src/onsyuri/ONSInputOverlay.cpp
     src/onsyuri/onscripter_main.cpp
     src/onsyuri/ONScripter_rmenu.cpp
     src/onsyuri/ONScripter_sound.cpp

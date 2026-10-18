@@ -433,8 +433,6 @@ private:
     void resetSentenceFont();
     void flush( int refresh_mode, SDL_Rect *rect=NULL, bool clear_dirty_flag=true, bool direct_flag=false );
     void flushDirect( SDL_Rect &rect, int refresh_mode );
-    /** [ONS-INPUT] present a full-screen overlay surface through the active renderer. */
-    void presentOverlaySurface(SDL_Surface *surface);
     #ifdef USE_SMPEG
     void flushDirectYUV(SDL_Overlay *overlay);
     #endif
@@ -444,9 +442,6 @@ private:
 public:
     void executeLabel();
     void runScript();
-    /** [ONS-INPUT] kernel-drawn SDL input box; returns 1 on confirm. */
-    int showInputOverlay(const char* prompt, const char* initial,
-                         int maxlen, char* out, int out_size);
     AnimationInfo *getSpriteInfo(int no){ return &sprite_info[no]; };
     AnimationInfo *getSprite2Info(int no){ return &sprite2_info[no]; };
     Uint32 getTextureFormat() { return texture_format; };
