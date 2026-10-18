@@ -79,8 +79,14 @@ INCLUDES="
 -I$PORT/bzip2-1.0.8
 "
 
-CXXFLAGS="-std=c++11 -Os -fPIC -Wno-invalid-source-encoding -Wno-unknown-attributes $DEFINES $INCLUDES"
-LDFLAGS="-shared -Os -flto -static-libstdc++ -Wl,-z,max-page-size=16384 -Wl,-soname,libonsyuri.so -Wl,--allow-shlib-undefined"
+if [ "${ONS_DEBUG:-0}" = "1" ]; then
+    # Symbol-rich build for crash analysis: no LTO, frame pointers kept.
+    CXXFLAGS="-std=c++11 -O0 -g -fno-omit-frame-pointer -fPIC -Wno-invalid-source-encoding -Wno-unknown-attributes $DEFINES $INCLUDES"
+    LDFLAGS="-shared -g -static-libstdc++ -Wl,-z,max-page-size=16384 -Wl,-soname,libonsyuri.so -Wl,--allow-shlib-undefined"
+else
+    CXXFLAGS="-std=c++11 -Os -fPIC -Wno-invalid-source-encoding -Wno-unknown-attributes $DEFINES $INCLUDES"
+    LDFLAGS="-shared -Os -flto -static-libstdc++ -Wl,-z,max-page-size=16384 -Wl,-soname,libonsyuri.so -Wl,--allow-shlib-undefined"
+fi
 
 echo "## building $OUT"
 OBJDIR="$ROOT/build_android_obj"
